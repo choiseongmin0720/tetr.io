@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tetris</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d0d14;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Courier New', monospace;
+    color: #e0e0e0;
+  }
+
+  .container {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 130px;
+  }
+
+  .panel {
+    background: #12121e;
+    border: 1px solid #2a2a3e;
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .panel-label {
+    font-size: 10px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+
+  .panel-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #fff;
+  }
+
+  .panel-sub {
+    font-size: 10px;
+    color: #444;
+    margin-top: 4px;
+    letter-spacing: 0.05em;
+  }
+
+  canvas { display: block; }
+
+  #next-canvas, #hold-canvas {
+    margin: 4px auto 0;
+  }
+
+  #start-btn {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #3a3a5e;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-size: 13px;
+    font-family: 'Courier New', monospace;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    letter-spacing: 0.05em;
+  }
+  #start-btn:hover { background: #22224a; border-color: #5555aa; }
+
+  .keys {
+    background: #12121e;
+    border: 1px solid #2a2a3e;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 11px;
+    color: #555;
+    line-height: 2;
+  }
+  .keys span { color: #7777bb; font-weight: bold; }
+
+  .title {
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  .title h1 {
+    font-size: 13px;
+    letter-spacing: 0.3em;
+    color: #5555aa;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- 왼쪽 패널 (홀드) -->
+  <div class="side">
+    <div class="panel">
+      <div class="panel-label">Hold <span style="color:#444;font-size:9px">[ C ]</span></div>
+      <canvas id="hold-canvas" width="100" height="100"></canvas>
+      <div class="panel-sub" id="hold-used"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Score</div>
+      <div class="panel-value" id="score">0</div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Level</div>
+      <div class="panel-value" id="level">1</div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Lines</div>
+      <div class="panel-value" id="lines">0</div>
+    </div>
+  </div>
+
+  <!-- 게임판 -->
+  <div>
+    <div class="title"><h1>Tetris</h1></div>
+    <canvas id="board" width="300" height="600"></canvas>
+  </div>
+
+  <!-- 오른쪽 패널 (NEXT + 조작) -->
+  <div class="side">
+    <div class="panel">
+      <div class="panel-label">Next</div>
+      <canvas id="next-canvas" width="100" height="100"></canvas>
+    </div>
+    <button id="start-btn">Start</button>
+    <div class="keys">
+      <span>← →</span> 이동<br>
+      <span>↑</span> 회전<br>
+      <span>↓</span> 소프트 낙하<br>
+      <span>Space</span> 즉시 낙하<br>
+      <span>C</span> 블록 보관<br>
+      <span>P</span> 일시정지
+    </div>
+  </div>
+
+</div>
+
+<script>
+const COLS = 10, ROWS = 20, SZ = 30;
+const canvas  = document.getElementById('board');
+const ctx     = canvas.getContext('2d');
+const ncanvas = document.getElementById('next-canvas');
+const nctx    = ncanvas.getContext('2d');
+const hcanvas = document.getElementById('hold-canvas');
+const hctx    = hcanvas.getContext('2d');
+
+const PIECES = [
+  { shape: [[1,1,1,1]],             color: '#00cfcf' }, // I
+  { shape: [[1,1],[1,1]],           color: '#f0c000' }, // O
+  { shape: [[0,1,0],[1,1,1]],       color: '#a020f0' }, // T
+  { shape: [[1,0,0],[1,1,1]],       color: '#f08000' }, // L
+  { shape: [[0,0,1],[1,1,1]],       color: '#2060f0' }, // J
+  { shape: [[0,1,1],[1,1,0]],       color: '#20d040' }, // S
+  { shape: [[1,1,0],[0,1,1]],       color: '#e02020' }, // Z
+];
+
+let board, cur, curX, curY, nextPiece, holdPiece;
+let score, level, lines, running, paused, interval, holdUsed;
+
+function newBoard() {
+  return Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+}
+
+function clonePiece(p) {
+  return { shape: p.shape.map(r => [...r]), color: p.color };
+}
+
+function randPiece() {
+  const p = PIECES[Math.floor(Math.random() * PIECES.length)];
+  return clonePiece(p);
+}
+
+function spawnPiece(p) {
+  cur  = clonePiece(p);
+  curX = Math.floor((COLS - cur.shape[0].length) / 2);
+  curY = 0;
+}
+
+function rotate(shape) {
+  const R = shape.length, C = shape[0].length;
+  const res = Array.from({ length: C }, () => Array(R).fill(0));
+  for (let r = 0; r < R; r++)
+    for (let c = 0; c < C; c++)
+      res[c][R - 1 - r] = shape[r][c];
+  return res;
+}
+
+function fits(shape, x, y) {
+  for (let r = 0; r < shape.length; r++)
+    for (let c = 0; c < shape[r].length; c++)
+      if (shape[r][c]) {
+        const nx = x + c, ny = y + r;
+        if (nx < 0 || nx >= COLS || ny >= ROWS) return false;
+        if (ny >= 0 && board[ny][nx]) return false;
+      }
+  return true;
+}
+
+function place() {
+  cur.shape.forEach((row, r) =>
+    row.forEach((v, c) => {
+      if (v) board[curY + r][curX + c] = cur.color;
+    })
+  );
+  clearLines();
+  holdUsed = false;
+  spawnPiece(nextPiece);
+  nextPiece = randPiece();
+  drawNext();
+  document.getElementById('hold-used').textContent = '';
+  if (!fits(cur.shape, curX, curY)) { gameOver(); return; }
+  draw();
+}
+
+function clearLines() {
+  let cleared = 0;
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (board[r].every(v => v)) {
+      board.splice(r, 1);
+      board.unshift(Array(COLS).fill(0));
+      cleared++; r++;
+    }
+  }
+  if (!cleared) return;
+  const pts = [0, 100, 300, 500, 800];
+  score += (pts[cleared] || 800) * level;
+  lines += cleared;
+  level  = Math.floor(lines / 10) + 1;
+  clearInterval(interval);
+  interval = setInterval(drop, Math.max(80, 500 - (level - 1) * 45));
+  document.getElementById('score').textContent = score;
+  document.getElementById('level').textContent = level;
+  document.getElementById('lines').textContent = lines;
+}
+
+function holdBlock() {
+  if (!running || paused || holdUsed) return;
+  holdUsed = true;
+
+  if (!holdPiece) {
+    holdPiece = clonePiece(cur);
+    holdPiece.shape = PIECES.find(p => p.color === holdPiece.color)?.shape.map(r=>[...r]) || holdPiece.shape;
+    spawnPiece(nextPiece);
+    nextPiece = randPiece();
+    drawNext();
+  } else {
+    const tmp  = holdPiece;
+    holdPiece  = clonePiece(cur);
+    holdPiece.shape = PIECES.find(p => p.color === holdPiece.color)?.shape.map(r=>[...r]) || holdPiece.shape;
+    spawnPiece(tmp);
+  }
+
+  document.getElementById('hold-used').textContent = '이번 차례 사용됨';
+  drawHold();
+  draw();
+}
+
+function drop() {
+  if (!running || paused) return;
+  if (fits(cur.shape, curX, curY + 1)) curY++;
+  else place();
+  draw();
+}
+
+function hardDrop() {
+  while (fits(cur.shape, curX, curY + 1)) curY++;
+  place();
+}
+
+function ghostY() {
+  let gy = curY;
+  while (fits(cur.shape, curX, gy + 1)) gy++;
+  return gy;
+}
+
+function drawCell(c, x, y, color, alpha) {
+  if (alpha !== undefined) {
+    c.globalAlpha = alpha;
+    c.fillStyle   = color;
+    c.fillRect(x*SZ+1, y*SZ+1, SZ-2, SZ-2);
+    c.strokeStyle = color;
+    c.lineWidth   = 1;
+    c.strokeRect(x*SZ+1, y*SZ+1, SZ-2, SZ-2);
+    c.globalAlpha = 1;
+    return;
+  }
+  c.fillStyle = color;
+  c.fillRect(x*SZ+1, y*SZ+1, SZ-2, SZ-2);
+  c.fillStyle = 'rgba(255,255,255,0.22)';
+  c.fillRect(x*SZ+1, y*SZ+1, SZ-2, 5);
+  c.fillRect(x*SZ+1, y*SZ+1, 5, SZ-2);
+  c.fillStyle = 'rgba(0,0,0,0.22)';
+  c.fillRect(x*SZ+SZ-6, y*SZ+1, 5, SZ-2);
+  c.fillRect(x*SZ+1, y*SZ+SZ-6, SZ-2, 5);
+}
+
+function draw() {
+  ctx.fillStyle = '#07070f';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = '#111120';
+  ctx.lineWidth = 0.5;
+  for (let c = 1; c < COLS; c++) {
+    ctx.beginPath(); ctx.moveTo(c*SZ, 0); ctx.lineTo(c*SZ, ROWS*SZ); ctx.stroke();
+  }
+  for (let r = 1; r < ROWS; r++) {
+    ctx.beginPath(); ctx.moveTo(0, r*SZ); ctx.lineTo(COLS*SZ, r*SZ); ctx.stroke();
+  }
+
+  board.forEach((row, r) => row.forEach((v, c) => { if (v) drawCell(ctx, c, r, v); }));
+
+  const gy = ghostY();
+  if (gy !== curY) {
+    cur.shape.forEach((row, r) =>
+      row.forEach((v, c) => {
+        if (v) drawCell(ctx, curX+c, gy+r, cur.color, 0.2);
+      })
+    );
+  }
+
+  cur.shape.forEach((row, r) =>
+    row.forEach((v, c) => { if (v) drawCell(ctx, curX+c, curY+r, cur.color); })
+  );
+}
+
+function drawMiniPiece(c, cnv, piece, dim) {
+  c.fillStyle = '#07070f';
+  c.fillRect(0, 0, cnv.width, cnv.height);
+  if (!piece) return;
+
+  const ns = piece.shape, nr = ns.length, nc = ns[0].length;
+  const ms = dim;
+  const ox = Math.floor((Math.floor(cnv.width/ms)  - nc) / 2);
+  const oy = Math.floor((Math.floor(cnv.height/ms) - nr) / 2);
+
+  ns.forEach((row, r) =>
+    row.forEach((v, col) => {
+      if (!v) return;
+      c.fillStyle = piece.color;
+      c.fillRect((ox+col)*ms+1, (oy+r)*ms+1, ms-2, ms-2);
+      c.fillStyle = 'rgba(255,255,255,0.22)';
+      c.fillRect((ox+col)*ms+1, (oy+r)*ms+1, ms-2, 4);
+      c.fillRect((ox+col)*ms+1, (oy+r)*ms+1, 4, ms-2);
+    })
+  );
+}
+
+function drawNext() { drawMiniPiece(nctx, ncanvas, nextPiece, 24); }
+function drawHold() {
+  if (holdPiece) {
+    hctx.globalAlpha = holdUsed ? 0.4 : 1.0;
+    drawMiniPiece(hctx, hcanvas, holdPiece, 24);
+    hctx.globalAlpha = 1.0;
+  } else {
+    hctx.fillStyle = '#07070f';
+    hctx.fillRect(0, 0, hcanvas.width, hcanvas.height);
+  }
+}
+
+function gameOver() {
+  running = false;
+  clearInterval(interval);
+  ctx.fillStyle = 'rgba(0,0,0,0.78)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#e02020';
+  ctx.font = 'bold 26px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 18);
+  ctx.fillStyle = '#888';
+  ctx.font = '14px Courier New';
+  ctx.fillText('Score: ' + score, canvas.width/2, canvas.height/2 + 14);
+  document.getElementById('start-btn').textContent = 'Restart';
+}
+
+function startGame() {
+  board      = newBoard();
+  score      = 0; level = 1; lines = 0;
+  running    = true; paused = false;
+  holdPiece  = null; holdUsed = false;
+  document.getElementById('score').textContent = 0;
+  document.getElementById('level').textContent = 1;
+  document.getElementById('lines').textContent = 0;
+  document.getElementById('hold-used').textContent = '';
+  document.getElementById('start-btn').textContent = 'Pause';
+
+  nextPiece = randPiece();
+  spawnPiece(randPiece());
+  nextPiece = randPiece();
+  drawNext();
+  drawHold();
+  clearInterval(interval);
+  interval = setInterval(drop, 500);
+  draw();
+}
+
+document.getElementById('start-btn').addEventListener('click', () => {
+  if (!running) { startGame(); return; }
+  paused = !paused;
+  document.getElementById('start-btn').textContent = paused ? 'Resume' : 'Pause';
+  if (!paused) draw();
+});
+
+document.addEventListener('keydown', e => {
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code)) e.preventDefault();
+
+  if (e.code === 'KeyP' && running) {
+    paused = !paused;
+    document.getElementById('start-btn').textContent = paused ? 'Resume' : 'Pause';
+    if (!paused) draw();
+    return;
+  }
+
+  if (!running || paused) return;
+
+  if (e.code === 'ArrowLeft'  && fits(cur.shape, curX-1, curY)) { curX--; draw(); }
+  if (e.code === 'ArrowRight' && fits(cur.shape, curX+1, curY)) { curX++; draw(); }
+  if (e.code === 'ArrowDown'  && fits(cur.shape, curX,   curY+1)) { curY++; draw(); }
+  if (e.code === 'Space')  { hardDrop(); }
+  if (e.code === 'KeyC')   { holdBlock(); }
+
+  if (e.code === 'ArrowUp') {
+    const r = rotate(cur.shape);
+    if      (fits(r, curX,   curY)) { cur.shape = r; }
+    else if (fits(r, curX+1, curY)) { cur.shape = r; curX++; }
+    else if (fits(r, curX-1, curY)) { cur.shape = r; curX--; }
+    else if (fits(r, curX+2, curY)) { cur.shape = r; curX+=2; }
+    else if (fits(r, curX-2, curY)) { cur.shape = r; curX-=2; }
+    draw();
+  }
+});
+
+ctx.fillStyle = '#07070f';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.fillStyle = '#333';
+ctx.font = '15px Courier New';
+ctx.textAlign = 'center';
+ctx.fillText('Press Start', canvas.width/2, canvas.height/2);
+hctx.fillStyle = '#07070f'; hctx.fillRect(0,0,100,100);
+nctx.fillStyle = '#07070f'; nctx.fillRect(0,0,100,100);
+</script>
+
+</body>
+</html>
